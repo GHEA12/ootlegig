@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OotleGig — escrowed micro-jobs with verifiable delivery receipts (simulation)</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; margin: 0 auto; max-width: 880px; padding: 1rem 1.25rem 3rem; line-height: 1.45; }
+  h1 { font-size: 1.6rem; margin-bottom: .2rem; }
+  .sub { opacity: .8; margin-top: 0; }
+  .sim-banner { border: 2px dashed #b8860b; border-radius: 8px; padding: .6rem .9rem; margin: 1rem 0; font-weight: 600; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+  .card { border: 1px solid #8886; border-radius: 8px; padding: .8rem 1rem; }
+  .card h2 { font-size: 1.05rem; margin: .1rem 0 .6rem; }
+  button { padding: .45rem .8rem; border-radius: 6px; border: 1px solid #8888; cursor: pointer; font-size: .95rem; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.primary { font-weight: 700; }
+  input, select { padding: .4rem; border-radius: 6px; border: 1px solid #8888; width: 100%; box-sizing: border-box; margin: .2rem 0 .6rem; }
+  label { font-size: .85rem; font-weight: 600; }
+  .mono { font-family: ui-monospace, monospace; font-size: .82rem; word-break: break-all; }
+  .state { font-size: 1.25rem; font-weight: 700; }
+  #log { list-style: none; padding: 0; font-size: .88rem; }
+  #log li { padding: .3rem .5rem; border-bottom: 1px solid #8883; }
+  #log li.err { color: #c0392b; font-weight: 600; }
+  #log li.ok { color: #1e8449; }
+  .row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+  .rolebtn[aria-pressed="true"] { outline: 2px solid #2e6fd8; font-weight: 700; }
+  footer { margin-top: 2rem; font-size: .85rem; opacity: .85; }
+</style>
+</head>
+<body>
+<h1>OotleGig</h1>
+<p class="sub">Escrowed micro-jobs with verifiable delivery receipts, on Tari Ootle.</p>
+
+<div class="sim-banner">
+  SIMULATION — this page runs the exact rules of the OotleGig Rust template in your
+  browser. No wallet, no network, no real funds. The on-chain version is the
+  <span class="mono">JobEscrow</span> template in <span class="mono">template/</span>,
+  proven by the engine tests (<span class="mono">cargo test</span>).
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h2>1. Act as</h2>
+    <div class="row" id="roles">
+      <button class="rolebtn" data-role="client" aria-pressed="true">Client</button>
+      <button class="rolebtn" data-role="worker" aria-pressed="false">Worker</button>
+      <button class="rolebtn" data-role="stranger" aria-pressed="false">Stranger</button>
+    </div>
+    <p style="font-size:.88rem">Every template rule checks the transaction signer.
+    Switch roles to see the rejections a wrong signer gets.</p>
+    <h2>2. Epoch clock</h2>
+    <p>Current epoch: <strong id="epoch">0</strong></p>
+    <div class="row">
+      <button id="epoch1">+1 epoch</button>
+      <button id="epoch10">+10 epochs</button>
+    </div>
+    <p style="font-size:.88rem">The review window is counted in epochs, exactly like the template
+    (about 20 minutes per epoch on mainnet).</p>
+  </div>
+
+  <div class="card">
+    <h2>Accounts (µT)</h2>
+    <p class="mono" id="balances"></p>
+    <h2>Job</h2>
+    <p>State: <span class="state" id="jobstate">— no job yet —</span></p>
+    <p class="mono" id="jobinfo"></p>
+  </div>
+</div>
+
+<div class="card" style="margin-top:1rem">
+  <h2>3. Post a job (as the client)</h2>
+  <label>Task text (only its SHA-256 hash goes on-chain)</label>
+  <input id="tasktext" value="Design a logo for a coffee shop">
+  <label>Escrow amount (µT)</label>
+  <input id="amount" type="number" value="400000000" min="1">
+  <label>Review window (epochs the client has to approve before the worker can claim)</label>
+  <input id="review" type="number" value="10" min="0">
+  <button class="primary" id="post">Post job &amp; escrow</button>
+  <button id="cancel">Cancel job (client, while open)</button>
+</div>
+
+<div class="card" style="margin-top:1rem">
+  <h2>4. Work &amp; deliver (as the worker)</h2>
+  <div class="row">
+    <button class="primary" id="accept">Accept job</button>
+  </div>
+  <label style="margin-top:.6rem; display:block">Delivery text (only its SHA-256 hash goes on-chain)</label>
+  <input id="deliverytext" value="Final logo files, v1">
+  <div class="row">
+    <button class="primary" id="deliver">Submit delivery</button>
+  </div>
+</div>
+
+<div class="card" style="margin-top:1rem">
+  <h2>5. Release</h2>
+  <div class="row">
+    <button class="primary" id="approve">Approve &amp; pay (client)</button>
+    <button id="claim">Claim after review window (worker)</button>
+    <button id="collect">Collect receipt NFT (worker)</button>
+  </div>
+  <p style="font-size:.88rem">Approval pays the worker and mints the delivery receipt.
+  If the client never approves, the worker claims the same payout once the review
+  window has passed. Either way the receipt can be collected exactly once.</p>
+  <div class="row">
+    <button id="reset">Reset simulation</button>
+  </div>
+</div>
+
+<div class="card" style="margin-top:1rem">
+  <h2>Log</h2>
+  <ul id="log"></ul>
+</div>
+
+<footer>
+  <p>OotleGig is an entry for the Tari November Build Contest 2026 (theme: MVP),
+  by Indra Dwi Junianto. MIT licensed. The template has not been published to
+  Esmeralda or mainnet yet; this simulation and the engine tests are the evidence.
+  Disputes are out of scope for v1: a client who dislikes a delivery simply does not
+  approve it (the worker's protection is the delivery record plus the timeout claim
+  only when the client goes silent).</p>
+</footer>
+
+<script type="module">
+import { GigSim, JobState } from "./sim.js";
+
+const sim = new GigSim();
+let actor = "client";
+
+const $ = (id) => document.getElementById(id);
+const logEl = $("log");
+
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function log(msg, cls = "") {
+  const li = document.createElement("li");
+  if (cls) li.className = cls;
+  li.textContent = msg;
+  logEl.prepend(li);
+}
+
+function fmt(n) { return n.toLocaleString("en-US"); }
+
+function render() {
+  $("epoch").textContent = sim.epoch;
+  $("balances").innerHTML =
+    `client:&nbsp;&nbsp; ${fmt(sim.balances.client)} µT · receipts: ${sim.receipts.client}<br>` +
+    `worker:&nbsp;&nbsp; ${fmt(sim.balances.worker)} µT · receipts: ${sim.receipts.worker}<br>` +
+    `stranger: ${fmt(sim.balances.stranger)} µT · receipts: ${sim.receipts.stranger}`;
+  const job = sim.job;
+  if (!job) {
+    $("jobstate").textContent = "— no job yet —";
+    $("jobinfo").textContent = "";
+    return;
+  }
+  $("jobstate").textContent = job.state;
+  $("jobinfo").innerHTML =
+    `client: ${job.client} · worker: ${job.worker ?? "—"}<br>` +
+    `escrowed: ${fmt(job.escrowed)} µT · review window: ${job.reviewEpochs} epochs<br>` +
+    `task hash: ${job.taskHash}<br>` +
+    `delivery hash: ${job.deliveryHash ?? "—"} · delivered at epoch: ${job.deliveredEpoch ?? "—"}<br>` +
+    `receipt minted: ${job.receiptMinted} · collected: ${job.receiptCollected}`;
+}
+
+function act(fn, okMsg) {
+  try {
+    fn();
+    if (okMsg) log(okMsg, "ok");
+  } catch (err) {
+    log(`REJECTED (as ${actor}): ${err.message}`, "err");
+  }
+  render();
+}
+
+$("roles").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-role]");
+  if (!btn) return;
+  actor = btn.dataset.role;
+  document.querySelectorAll(".rolebtn").forEach((b) => b.setAttribute("aria-pressed", b === btn ? "true" : "false"));
+  log(`Now acting as: ${actor}`);
+});
+
+$("epoch1").onclick = () => { sim.advanceEpoch(1); render(); };
+$("epoch10").onclick = () => { sim.advanceEpoch(10); render(); };
+
+$("post").onclick = async () => {
+  const amount = Number($("amount").value);
+  const review = Number($("review").value);
+  const hash = await sha256Hex($("tasktext").value);
+  act(() => sim.postJob(actor, amount, hash, review), `Job posted by ${actor}: ${fmt(amount)} µT escrowed, task hash ${hash.slice(0, 16)}…`);
+};
+$("cancel").onclick = () => act(() => sim.cancel(actor), "Job cancelled, escrow refunded in full.");
+$("accept").onclick = () => act(() => sim.acceptJob(actor), `Job accepted by ${actor}.`);
+$("deliver").onclick = async () => {
+  const hash = await sha256Hex($("deliverytext").value);
+  act(() => sim.submitDelivery(actor, hash), `Delivery recorded at epoch ${sim.epoch}, hash ${hash.slice(0, 16)}…`);
+};
+$("approve").onclick = () => act(() => sim.approve(actor), "Approved: worker paid, receipt NFT minted.");
+$("claim").onclick = () => act(() => sim.claimTimeout(actor), "Review window passed: worker claimed the escrow, receipt NFT minted.");
+$("collect").onclick = () => act(() => sim.collectReceipt(actor), "Receipt NFT collected by the worker.");
+$("reset").onclick = () => { sim.reset(); logEl.innerHTML = ""; log("Simulation reset."); render(); };
+
+render();
+log("Simulation ready. Post a job as the client to begin.");
+</script>
+</body>
+</html>
